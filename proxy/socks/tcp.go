@@ -5,16 +5,12 @@ import (
 	"io/ioutil"
 	"net"
 
-	adapters "github.com/whojave/clash/adapters/inbound"
-	"github.com/whojave/clash/component/socks5"
-	C "github.com/whojave/clash/constant"
-	"github.com/whojave/clash/log"
-	authStore "github.com/whojave/clash/proxy/auth"
-	"github.com/whojave/clash/tunnel"
-)
-
-var (
-	tun = tunnel.Instance()
+	adapters "github.com/brobird/clash/adapters/inbound"
+	"github.com/brobird/clash/component/socks5"
+	C "github.com/brobird/clash/constant"
+	"github.com/brobird/clash/log"
+	authStore "github.com/brobird/clash/proxy/auth"
+	"github.com/brobird/clash/tunnel"
 )
 
 type SockListener struct {
@@ -40,7 +36,7 @@ func NewSocksProxy(addr string) (*SockListener, error) {
 				}
 				continue
 			}
-			go handleSocks(c)
+			go HandleSocks(c)
 		}
 	}()
 
@@ -56,17 +52,19 @@ func (l *SockListener) Address() string {
 	return l.address
 }
 
-func handleSocks(conn net.Conn) {
+func HandleSocks(conn net.Conn) {
 	target, command, err := socks5.ServerHandshake(conn, authStore.Authenticator())
 	if err != nil {
 		_ = conn.Close()
 		return
 	}
-	_ = conn.(*net.TCPConn).SetKeepAlive(true)
+	if c, ok := conn.(*net.TCPConn); ok {
+		c.SetKeepAlive(true)
+	}
 	if command == socks5.CmdUDPAssociate {
 		defer conn.Close()
 		_, _ = io.Copy(ioutil.Discard, conn)
 		return
 	}
-	tun.Add(adapters.NewSocket(target, conn, C.SOCKS, C.TCP))
+	tunnel.Add(adapters.NewSocket(target, conn, C.SOCKS))
 }

@@ -4,7 +4,8 @@ import (
 	"context"
 	"net"
 
-	C "github.com/whojave/clash/constant"
+	"github.com/brobird/clash/component/dialer"
+	C "github.com/brobird/clash/constant"
 )
 
 type Direct struct {
@@ -12,30 +13,26 @@ type Direct struct {
 }
 
 func (d *Direct) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
-	address := net.JoinHostPort(metadata.Host, metadata.DstPort)
-	if metadata.DstIP != nil {
-		address = net.JoinHostPort(metadata.DstIP.String(), metadata.DstPort)
-	}
+	address := net.JoinHostPort(metadata.String(), metadata.DstPort)
 
-	c, err := dialContext(ctx, "tcp", address)
+	c, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, err
 	}
 	tcpKeepAlive(c)
-	return newConn(c, d), nil
+	return NewConn(c, d), nil
 }
 
-func (d *Direct) DialUDP(metadata *C.Metadata) (C.PacketConn, net.Addr, error) {
-	pc, err := net.ListenPacket("udp", "")
+func (d *Direct) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
+	pc, err := dialer.ListenPacket("udp", "")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	return newPacketConn(&directPacketConn{pc}, d), nil
+}
 
-	addr, err := resolveUDPAddr("udp", metadata.RemoteAddress())
-	if err != nil {
-		return nil, nil, err
-	}
-	return newPacketConn(pc, d), addr, nil
+type directPacketConn struct {
+	net.PacketConn
 }
 
 func NewDirect() *Direct {

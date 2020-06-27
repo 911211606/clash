@@ -8,12 +8,13 @@ import (
 	"strconv"
 	"strings"
 
-	C "github.com/whojave/clash/constant"
-	"github.com/mzz2017/shadowsocksR/obfs"
-	"github.com/mzz2017/shadowsocksR/protocol"
+	C "github.com/brobird/clash/constant"
+	"github.com/brobird/clash/component/dialer"
+	"github.com/brobird/gossr/obfs"
+	"github.com/brobird/gossr/protocol"
 
-	shadowsocksr "github.com/mzz2017/shadowsocksR"
-	"github.com/mzz2017/shadowsocksR/ssr"
+	shadowsocksr "github.com/brobird/gossr"
+	"github.com/brobird/gossr/ssr"
 )
 
 type ShadowsocksR struct {
@@ -44,7 +45,7 @@ func (ssrins *ShadowsocksR) DialContext(ctx context.Context, metadata *C.Metadat
 		return nil, err
 	}
 
-	conn, err := dialContext(ctx, "tcp", ssrins.server)
+	conn, err := dialer.DialContext(ctx, "tcp", ssrins.server)
 	if err != nil {
 		return nil, err
 	}
@@ -60,9 +61,9 @@ func (ssrins *ShadowsocksR) DialContext(ctx context.Context, metadata *C.Metadat
 	if strings.HasSuffix(ssrop.Obfs, "_compatible") {
 		ssrop.Obfs = strings.ReplaceAll(ssrop.Obfs, "_compatible", "")
 	}
-	dstcon.IObfs = obfs.NewObfs(ssrop.Obfs)
-	if dstcon.IObfs == nil {
-		return nil, errors.New("obfs method do not support")
+	dstcon.IObfs, err = obfs.NewObfs(ssrop.Obfs)
+	if err != nil {
+		return nil, err
 	}
 	obfsServerInfo := &ssr.ServerInfoForObfs{
 		Host:   rs[0],
@@ -75,9 +76,9 @@ func (ssrins *ShadowsocksR) DialContext(ctx context.Context, metadata *C.Metadat
 	if strings.HasSuffix(ssrop.Protocol, "_compatible") {
 		ssrop.Protocol = strings.ReplaceAll(ssrop.Protocol, "_compatible", "")
 	}
-	dstcon.IProtocol = protocol.NewProtocol(ssrop.Protocol)
-	if dstcon.IProtocol == nil {
-		return nil, errors.New("protocol do not support")
+	dstcon.IProtocol, err = protocol.NewProtocol(ssrop.Protocol)
+	if err != nil {
+		return nil, err
 	}
 	protocolServerInfo := &ssr.ServerInfoForObfs{
 		Host:   rs[0],
@@ -101,7 +102,7 @@ func (ssrins *ShadowsocksR) DialContext(ctx context.Context, metadata *C.Metadat
 		_ = dstcon.Close()
 		return nil, err
 	}
-	return newConn(dstcon, ssrins), err
+	return NewConn(dstcon, ssrins), err
 
 }
 
@@ -125,6 +126,6 @@ func (ssr *ShadowsocksR) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (ssr *ShadowsocksR) DialUDP(metadata *C.Metadata) (pac C.PacketConn, netaddr net.Addr, err error) {
-	return nil, nil, nil
+func (ssr *ShadowsocksR) DialUDP(metadata *C.Metadata) (pac C.PacketConn, err error) {
+	return nil, nil
 }

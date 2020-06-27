@@ -4,44 +4,31 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path/filepath"
+	"sync"
 
-	"github.com/whojave/clash/adapters/provider"
-	"github.com/whojave/clash/component/auth"
-	trie "github.com/whojave/clash/component/domain-trie"
-	"github.com/whojave/clash/config"
-	C "github.com/whojave/clash/constant"
-	"github.com/whojave/clash/dns"
-	"github.com/whojave/clash/log"
-	P "github.com/whojave/clash/proxy"
-	authStore "github.com/whojave/clash/proxy/auth"
-	T "github.com/whojave/clash/tunnel"
+	"github.com/brobird/clash/adapters/provider"
+	"github.com/brobird/clash/component/auth"
+	"github.com/brobird/clash/component/dialer"
+	"github.com/brobird/clash/component/resolver"
+	"github.com/brobird/clash/component/trie"
+	"github.com/brobird/clash/config"
+	C "github.com/brobird/clash/constant"
+	"github.com/brobird/clash/dns"
+	"github.com/brobird/clash/log"
+	P "github.com/brobird/clash/proxy"
+	authStore "github.com/brobird/clash/proxy/auth"
+	"github.com/brobird/clash/tunnel"
 )
 
-// forward compatibility before 1.0
-func readRawConfig(path string) ([]byte, error) {
-	data, err := ioutil.ReadFile(path)
-	if err == nil && len(data) != 0 {
-		return data, nil
-	}
-
-	if filepath.Ext(path) != ".yaml" {
-		return nil, err
-	}
-
-	path = path[:len(path)-5] + ".yml"
-	if _, fallbackErr := os.Stat(path); fallbackErr == nil {
-		return ioutil.ReadFile(path)
-	}
-
-	return data, err
-}
+var (
+	mux sync.Mutex
+)
 
 func readConfig(path string) ([]byte, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, err
 	}
-	data, err := readRawConfig(path)
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -75,15 +62,16 @@ func ParseWithBytes(buf []byte) (*config.Config, error) {
 
 // ApplyConfig dispatch configure to all parts
 func ApplyConfig(cfg *config.Config, force bool) {
+	mux.Lock()
+	defer mux.Unlock()
+
 	updateUsers(cfg.Users)
-	if force {
-		updateGeneral(cfg.General)
-	}
+	updateGeneral(cfg.General, force)
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules)
 	updateDNS(cfg.DNS)
 	updateHosts(cfg.Hosts)
-	updateExperimental(cfg.Experimental)
+	updateExperimental(cfg)
 }
 
 func GetGeneral() *config.General {
@@ -94,27 +82,29 @@ func GetGeneral() *config.General {
 	}
 
 	general := &config.General{
-		Port:           ports.Port,
-		SocksPort:      ports.SocksPort,
-		RedirPort:      ports.RedirPort,
-		Authentication: authenticator,
-		AllowLan:       P.AllowLan(),
-		BindAddress:    P.BindAddress(),
-		Mode:           T.Instance().Mode(),
-		LogLevel:       log.Level(),
+		Inbound: config.Inbound{
+			Port:           ports.Port,
+			SocksPort:      ports.SocksPort,
+			RedirPort:      ports.RedirPort,
+			MixedPort:      ports.MixedPort,
+			Authentication: authenticator,
+			AllowLan:       P.AllowLan(),
+			BindAddress:    P.BindAddress(),
+		},
+		Mode:     tunnel.Mode(),
+		LogLevel: log.Level(),
 	}
 
 	return general
 }
 
-func updateExperimental(c *config.Experimental) {
-	T.Instance().UpdateExperimental(c.IgnoreResolveFail)
-}
+func updateExperimental(c *config.Config) {}
 
 func updateDNS(c *config.DNS) {
 	if c.Enable == false {
-		dns.DefaultResolver = nil
-		_ = dns.ReCreateServer("", nil)
+		resolver.DefaultResolver = nil
+		tunnel.SetResolver(nil)
+		dns.ReCreateServer("", nil)
 		return
 	}
 	r := dns.New(dns.Config{
@@ -127,8 +117,10 @@ func updateDNS(c *config.DNS) {
 			GeoIP:  c.FallbackFilter.GeoIP,
 			IPCIDR: c.FallbackFilter.IPCIDR,
 		},
+		Default: c.DefaultNameserver,
 	})
-	dns.DefaultResolver = r
+	resolver.DefaultResolver = r
+	tunnel.SetResolver(r)
 	if err := dns.ReCreateServer(c.Listen, r); err != nil {
 		log.Errorln("Start DNS server error: %s", err.Error())
 		return
@@ -139,29 +131,34 @@ func updateDNS(c *config.DNS) {
 	}
 }
 
-func updateHosts(tree *trie.Trie) {
-	dns.DefaultHosts = tree
+func updateHosts(tree *trie.DomainTrie) {
+	resolver.DefaultHosts = tree
 }
 
 func updateProxies(proxies map[string]C.Proxy, providers map[string]provider.ProxyProvider) {
-	tunnel := T.Instance()
-	oldProviders := tunnel.Providers()
-
-	// close providers goroutine
-	for _, provider := range oldProviders {
-		provider.Destroy()
-	}
-
 	tunnel.UpdateProxies(proxies, providers)
 }
 
 func updateRules(rules []C.Rule) {
-	T.Instance().UpdateRules(rules)
+	tunnel.UpdateRules(rules)
 }
 
-func updateGeneral(general *config.General) {
+func updateGeneral(general *config.General, force bool) {
 	log.SetLevel(general.LogLevel)
-	T.Instance().SetMode(general.Mode)
+	tunnel.SetMode(general.Mode)
+	resolver.DisableIPv6 = !general.IPv6
+
+	if general.Interface != "" {
+		dialer.DialHook = dialer.DialerWithInterface(general.Interface)
+		dialer.ListenPacketHook = dialer.ListenPacketWithInterface(general.Interface)
+	} else {
+		dialer.DialHook = nil
+		dialer.ListenPacketHook = nil
+	}
+
+	if !force {
+		return
+	}
 
 	allowLan := general.AllowLan
 	P.SetAllowLan(allowLan)
@@ -179,6 +176,10 @@ func updateGeneral(general *config.General) {
 
 	if err := P.ReCreateRedir(general.RedirPort); err != nil {
 		log.Errorln("Start Redir server error: %s", err.Error())
+	}
+
+	if err := P.ReCreateMixed(general.MixedPort); err != nil {
+		log.Errorln("Start Mixed(http and socks5) server error: %s", err.Error())
 	}
 }
 

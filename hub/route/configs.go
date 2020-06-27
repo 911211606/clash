@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/whojave/clash/config"
-	"github.com/whojave/clash/hub/executor"
-	"github.com/whojave/clash/log"
-	P "github.com/whojave/clash/proxy"
-	T "github.com/whojave/clash/tunnel"
+	"github.com/brobird/clash/config"
+	"github.com/brobird/clash/hub/executor"
+	"github.com/brobird/clash/log"
+	P "github.com/brobird/clash/proxy"
+	"github.com/brobird/clash/tunnel"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/render"
@@ -23,13 +23,14 @@ func configRouter() http.Handler {
 }
 
 type configSchema struct {
-	Port        *int          `json:"port"`
-	SocksPort   *int          `json:"socks-port"`
-	RedirPort   *int          `json:"redir-port"`
-	AllowLan    *bool         `json:"allow-lan"`
-	BindAddress *string       `json:"bind-address"`
-	Mode        *T.Mode       `json:"mode"`
-	LogLevel    *log.LogLevel `json:"log-level"`
+	Port        *int               `json:"port"`
+	SocksPort   *int               `json:"socks-port"`
+	RedirPort   *int               `json:"redir-port"`
+	MixedPort   *int               `json:"mixed-port"`
+	AllowLan    *bool              `json:"allow-lan"`
+	BindAddress *string            `json:"bind-address"`
+	Mode        *tunnel.TunnelMode `json:"mode"`
+	LogLevel    *log.LogLevel      `json:"log-level"`
 }
 
 func getConfigs(w http.ResponseWriter, r *http.Request) {
@@ -62,12 +63,13 @@ func patchConfigs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ports := P.GetPorts()
-	_ = P.ReCreateHTTP(pointerOrDefault(general.Port, ports.Port))
-	_ = P.ReCreateSocks(pointerOrDefault(general.SocksPort, ports.SocksPort))
-	_ = P.ReCreateRedir(pointerOrDefault(general.RedirPort, ports.RedirPort))
+	P.ReCreateHTTP(pointerOrDefault(general.Port, ports.Port))
+	P.ReCreateSocks(pointerOrDefault(general.SocksPort, ports.SocksPort))
+	P.ReCreateRedir(pointerOrDefault(general.RedirPort, ports.RedirPort))
+	P.ReCreateMixed(pointerOrDefault(general.MixedPort, ports.MixedPort))
 
 	if general.Mode != nil {
-		T.Instance().SetMode(*general.Mode)
+		tunnel.SetMode(*general.Mode)
 	}
 
 	if general.LogLevel != nil {

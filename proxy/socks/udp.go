@@ -3,10 +3,13 @@ package socks
 import (
 	"net"
 
-	adapters "github.com/whojave/clash/adapters/inbound"
-	"github.com/whojave/clash/common/pool"
-	"github.com/whojave/clash/component/socks5"
-	C "github.com/whojave/clash/constant"
+	adapters "github.com/brobird/clash/adapters/inbound"
+	"github.com/brobird/clash/common/pool"
+	"github.com/brobird/clash/common/sockopt"
+	"github.com/brobird/clash/component/socks5"
+	C "github.com/brobird/clash/constant"
+	"github.com/brobird/clash/log"
+	"github.com/brobird/clash/tunnel"
 )
 
 type SockUDPListener struct {
@@ -21,13 +24,18 @@ func NewSocksUDPProxy(addr string) (*SockUDPListener, error) {
 		return nil, err
 	}
 
+	err = sockopt.UDPReuseaddr(l.(*net.UDPConn))
+	if err != nil {
+		log.Warnln("Failed to Reuse UDP Address: %s", err)
+	}
+
 	sl := &SockUDPListener{l, addr, false}
 	go func() {
 		for {
-			buf := pool.BufPool.Get().([]byte)
+			buf := pool.Get(pool.RelayBufferSize)
 			n, remoteAddr, err := l.ReadFrom(buf)
 			if err != nil {
-				pool.BufPool.Put(buf[:cap(buf)])
+				pool.Put(buf)
 				if sl.closed {
 					break
 				}
@@ -53,15 +61,14 @@ func handleSocksUDP(pc net.PacketConn, buf []byte, addr net.Addr) {
 	target, payload, err := socks5.DecodeUDPPacket(buf)
 	if err != nil {
 		// Unresolved UDP packet, return buffer to the pool
-		pool.BufPool.Put(buf[:cap(buf)])
+		pool.Put(buf)
 		return
 	}
-	packet := &fakeConn{
-		PacketConn: pc,
-		remoteAddr: addr,
-		targetAddr: target,
-		payload:    payload,
-		bufRef:     buf,
+	packet := &packet{
+		pc:      pc,
+		rAddr:   addr,
+		payload: payload,
+		bufRef:  buf,
 	}
-	tun.AddPacket(adapters.NewPacket(target, packet, C.SOCKS, C.UDP))
+	tunnel.AddPacket(adapters.NewPacket(target, packet, C.SOCKS))
 }

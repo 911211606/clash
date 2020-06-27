@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/whojave/clash/common/pool"
+	"github.com/brobird/clash/common/pool"
 )
 
 // HTTPObfs is shadowsocks http simple-obfs implementation
@@ -34,15 +34,15 @@ func (ho *HTTPObfs) Read(b []byte) (int, error) {
 	}
 
 	if ho.firstResponse {
-		buf := pool.BufPool.Get().([]byte)
+		buf := pool.Get(pool.RelayBufferSize)
 		n, err := ho.Conn.Read(buf)
 		if err != nil {
-			pool.BufPool.Put(buf[:cap(buf)])
+			pool.Put(buf)
 			return 0, err
 		}
 		idx := bytes.Index(buf[:n], []byte("\r\n\r\n"))
 		if idx == -1 {
-			pool.BufPool.Put(buf[:cap(buf)])
+			pool.Put(buf)
 			return 0, io.EOF
 		}
 		ho.firstResponse = false
@@ -52,7 +52,7 @@ func (ho *HTTPObfs) Read(b []byte) (int, error) {
 			ho.buf = buf[:idx+4+length]
 			ho.offset = idx + 4 + n
 		} else {
-			pool.BufPool.Put(buf[:cap(buf)])
+			pool.Put(buf)
 		}
 		return n, nil
 	}
